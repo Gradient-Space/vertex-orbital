@@ -1,0 +1,2 @@
+skyfield==1.49
+pybindgen==0.22.1
