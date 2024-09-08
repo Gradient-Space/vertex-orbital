@@ -1,4 +1,4 @@
-import sqlite3, random, datetime as dt
+import psycopg, os, random, datetime as dt
 from typing import List
 from collections import namedtuple
 from skyfield.api import EarthSatellite, load
@@ -6,29 +6,29 @@ from skyfield.toposlib import wgs84
 
 Station = namedtuple(
     "Station", 
-    ["StnName", "StnID", "Latitude", "Longitude", "Altitude", "MinHorizon"]
+    ["StnID", "StnName", "Latitude", "Longitude", "Altitude", "MinHorizon"]
 )
 
 TLE = namedtuple(
     "TLE", 
-    ["SatName", "SatID", "Line1", "Line2"]
+    ["NoradID", "SatName", "Line1", "Line2"]
 )
 
 Pass = namedtuple(
     "Pass", 
-    ["StnName", "StnID", "SatName", "SatID", "Azimuth", "Elevation", "Start", "End", "Scheduled"]
+    ["StnID", "StnName", "NoradID", "SatName", "Azimuth", "Elevation", "Start", "End", "Scheduled"]
 )
 
 
-def QueryStns(cursor: sqlite3.Cursor) -> List[Station]:
+def QueryStns(cursor: psycopg.Cursor) -> List[Station]:
     query_stations = """
         SELECT 
-            StnName,
-            StnID, 
-            Latitude,
-            Longitude,
-            Altitude, 
-            MinHorizon
+            stnid, 
+            stnname,
+            latitude,
+            longitude,
+            altitude, 
+            minhorizon
         FROM Stations;
     """
 
@@ -49,13 +49,13 @@ def QueryStns(cursor: sqlite3.Cursor) -> List[Station]:
 
     return stns
 
-def QueryTLEs(cursor: sqlite3.Cursor) -> List[TLE]:
+def QueryTLEs(cursor: psycopg.Cursor) -> List[TLE]:
     query_tles = """
         SELECT
-            SatName,
-            SatID, 
-            Line1, 
-            Line2 
+            noradid,
+            satname,
+            line1, 
+            line2 
         FROM TLEs;
     """
 
@@ -74,17 +74,17 @@ def QueryTLEs(cursor: sqlite3.Cursor) -> List[TLE]:
 
     return tles
 
-def QueryPasses(cursor: sqlite3.Cursor) -> List[Pass]:
+def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
     query_passes = """
         SELECT 
-            StnName, 
-            StnID,
-            SatName, 
-            SatID, 
-            Azimuth,
-            Elevation, 
-            Start, 
-            End,
+            stnid,
+            stnname, 
+            noradid, 
+            satname, 
+            azimuth,
+            elevation, 
+            aos, 
+            los,
             Scheduled
         FROM Passes;
     """
@@ -140,10 +140,10 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
                 topo_pos = diff.at(ts)
                 ele, azi, _ = topo_pos.altaz()
                 ps = Pass(
-                    stn.StnName, 
                     stn.StnID, 
+                    stn.StnName, 
+                    tle.NoradID, 
                     tle.SatName, 
-                    tle.SatID, 
                     float(azi.degrees), 
                     float(ele.degrees), 
                     start.isoformat(), 
@@ -154,28 +154,31 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
 
     return passes
 
-def InsertPasses(conn: sqlite3.Connection, cursor: sqlite3.Cursor, passes: List[Pass]) -> None:
+def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[Pass]) -> None:
     insert_passes = """
         INSERT INTO Passes (
-            StnName, 
-            StnID, 
-            SatName, 
-            SatID, 
-            Azimuth,
-            Elevation, 
-            Start, 
-            End,
-            Scheduled
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            stnid, 
+            stnname, 
+            noradid, 
+            satname, 
+            azimuth,
+            elevation, 
+            aos, 
+            los,
+            scheduled
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
-
-    cursor.executemany(insert_passes, passes)
+    with conn.transaction():
+        cursor.executemany(insert_passes, passes)
+    
     conn.commit()
 
     return
 
 def main() -> None:
-    conn = sqlite3.connect("./auroranet.db")
+    db_url = os.getenv("DB_URL")
+    conn = psycopg.connect(db_url)         
+    conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
     cursor = conn.cursor()
     tles = QueryTLEs(cursor)
     stns = QueryStns(cursor)
