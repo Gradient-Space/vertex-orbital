@@ -199,8 +199,7 @@ def consumer(
 
     while not nq.empty():
         if i == max_iter:
-            nq.get(block=False, timeout=None)
-            logger.info(f"Consumer Reached MAX_QUEUE_SIZE+1 {i}: {notify}")
+            logger.info(f"Reached max_iter = {i}, Dropping Incoming Notifications")
             break
 
         notify = nq.get(block=False, timeout=None)
@@ -257,12 +256,21 @@ def main() -> None:
     pl = Lock()
 
     for notify in gen:
-        logger.info(f"Enqueueing Notification {notify}")
-        nq.put(notify, block=False)
+        match nq.full():
+            case True:
+                logger.warning(f"Notification Queue Full")
+                pl.acquire(blocking=True)
+                nqfull_t = Thread(target=consumer, args=(0, pl, nq, qsize, io_conn, cursor))
+                nqfull_t.start()
+                nq.join()
 
-        if pl.acquire(blocking=False):
-            pt = Thread(target=consumer, args=(dt, pl, nq, qsize, io_conn, cursor))
-            pt.start()
+            case False:
+                logger.info(f"Enqueueing Notification {notify}")
+                nq.put(notify, block=False)
+                
+                if pl.acquire(blocking=False):
+                    pt = Thread(target=consumer, args=(dt, pl, nq, qsize, io_conn, cursor))
+                    pt.start()
          
     listen_conn.close()
     io_conn.close()
