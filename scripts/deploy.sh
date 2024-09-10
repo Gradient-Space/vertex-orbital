@@ -7,8 +7,9 @@ until pg_isready -h ${DB_HOST} -U ${DB_USER} -p ${DB_PORT} -d ${DB_NAME}; do
     >&2 echo "Postgres is not available yet - sleeping"
     sleep 1
 done && \
-podman run -it --rm \
+podman run -dit --rm \
     --pod Vertex \
     --name vertex-orbital \
     -e DB_URL=${DB_URL} \
+    -e DB_CHANNEL=${DB_CHANNEL} \
     localhost/vertex-orbital:v0.1

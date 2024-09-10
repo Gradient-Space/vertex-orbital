@@ -1,4 +1,4 @@
-import psycopg, os, random, datetime as dt
+import psycopg, os, time, random, datetime as dt
 from typing import List
 from collections import namedtuple
 from skyfield.api import EarthSatellite, load
@@ -175,22 +175,27 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
 
     return
 
-def main() -> None:
-    db_url = os.getenv("DB_URL")
-    conn = psycopg.connect(db_url)         
-    conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
-    cursor = conn.cursor()
-    tles = QueryTLEs(cursor)
-    stns = QueryStns(cursor)
-    passes = ComputePasses(stns, tles)
-    InsertPasses(conn, cursor, passes)
-    passes = QueryPasses(cursor)
-    
-    for ps in passes:
-        print(ps)
-    
-    conn.close()
 
+def main() -> None:
+    channel = os.getenv("DB_CHANNEL")
+    db_url = os.getenv("DB_URL")
+    listen_conn = psycopg.connect(db_url, autocommit=True)         
+    io_conn = psycopg.connect(db_url)         
+    io_conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
+    cursor = io_conn.cursor()
+    
+    notifications = f"LISTEN {channel}"
+    listen_conn.execute(notifications)
+    print(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
+    gen = listen_conn.notifies()
+    i=0
+
+    for notify in gen:
+        print(f"{i} : {notify}")
+        i+=1
+    
+    listen_conn.close()
+    io_conn.close()
     return 
 
 
