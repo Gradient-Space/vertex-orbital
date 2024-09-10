@@ -1,5 +1,6 @@
-import psycopg, os, time, logging, random, datetime as dt
+import psycopg, os, time, copy, logging, random, datetime as dt
 from threading import Lock, Thread
+from queue import Queue
 from typing import List
 from collections import namedtuple
 from skyfield.api import EarthSatellite, load
@@ -181,27 +182,43 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
     return
 
 
-def delayed_handler(
+def consumer(
         dt: int, 
         pl: Lock,
+        nq: Queue,
+        qsize: int,
         conn: psycopg.Connection,
         cursor: psycopg.Cursor
 ) -> None:
-
-    logger.info("Notification Batch Processor Sleeping")
+    logger.info("Notification Consumer Thread Sleeping")
     time.sleep(dt)
-    logger.info("Notification Batch Processor Waking")
+    logger.info("Notification Consumer Thread Waking")
+    
+    i = 0
+    max_iter = qsize
+
+    while not nq.empty():
+        if i == max_iter:
+            nq.get(block=False, timeout=None)
+            logger.info(f"Consumer Reached MAX_QUEUE_SIZE+1 {i}: {notify}")
+            break
+
+        notify = nq.get(block=False, timeout=None)
+        logger.info(f"Dequeueing notification {i}: {notify}")
+        i += 1
+        
     logger.info(f"Querying TLEs and Stations")
     tles = QueryTLEs(cursor)
     stns = QueryStns(cursor)
+
     logger.info(f"Computing Passes")
     passes = ComputePasses(stns, tles)
+
     logger.info(f"Inserting Computed Passes Into Database")
     InsertPasses(conn, cursor, passes)
     logger.info(f"Pass Database Transaction Completed")
-    logger.info(f"Notification Batch of {dt} sec. Finished")
     pl.release()
-    
+
     return
 
 
@@ -212,17 +229,18 @@ def main() -> None:
         level=logging.DEBUG,
         filemode='a',
     )
+    
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(
-            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     )
-    logger.addHandler(logging.StreamHandler())
 
+    logger.addHandler(logging.StreamHandler())
     logger.info("Parsing Environment Variables")
     dt = int(os.getenv("DELAY"))
+    qsize = int(os.getenv("MAX_QUEUE_SIZE"))
     channel = os.getenv("DB_CHANNEL")
     db_url = os.getenv("DB_URL")
-
 
     logger.info("Creating Database Notification Channel Listener")
     listen_conn = psycopg.connect(db_url, autocommit=True)         
@@ -235,15 +253,17 @@ def main() -> None:
     listen_conn.execute(f"LISTEN {channel}")
     logger.info(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
     gen = listen_conn.notifies()
-    pass_lock = Lock()
+    nq = Queue(maxsize=qsize)
+    pl = Lock()
 
     for notify in gen:
-        logger.info(notify)
+        logger.info(f"Enqueueing Notification {notify}")
+        nq.put(notify, block=False)
 
-        if pass_lock.acquire(blocking=False):
-            thrd = Thread(target=delayed_handler, args=(dt, pass_lock, io_conn, cursor))
-            thrd.start()
-    
+        if pl.acquire(blocking=False):
+            pt = Thread(target=consumer, args=(dt, pl, nq, qsize, io_conn, cursor))
+            pt.start()
+         
     listen_conn.close()
     io_conn.close()
    

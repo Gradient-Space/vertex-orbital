@@ -13,4 +13,5 @@ podman run -dit --rm \
     -e DB_URL=${DB_URL} \
     -e DB_CHANNEL=${DB_CHANNEL} \
     -e DELAY=${DELAY} \
+    -e MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE} \
     localhost/vertex-orbital:v0.1
