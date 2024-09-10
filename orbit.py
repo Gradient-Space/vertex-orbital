@@ -1,5 +1,5 @@
 import psycopg, os, time, copy, logging, random, datetime as dt
-from threading import Lock, Thread
+from threading import Thread
 from queue import Queue
 from typing import List
 from collections import namedtuple
@@ -184,39 +184,33 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
 
 def consumer(
         dt: int, 
-        pl: Lock,
         nq: Queue,
         qsize: int,
         conn: psycopg.Connection,
         cursor: psycopg.Cursor
 ) -> None:
-    logger.info("Notification Consumer Thread Sleeping")
-    time.sleep(dt)
-    logger.info("Notification Consumer Thread Waking")
-    
-    i = 0
-    max_iter = qsize
 
-    while not nq.empty():
-        if i == max_iter:
-            logger.info(f"Reached max_iter = {i}, Dropping Incoming Notifications")
-            break
+    while True:
+        nq.get(block=True, timeout=None)
+        logger.info("Notification Consumer Thread Sleeping")
+        time.sleep(dt)
+        logger.info("Notification Consumer Thread Waking")
+        i = 0
 
-        notify = nq.get(block=False, timeout=None)
-        logger.info(f"Dequeueing notification {i}: {notify}")
-        i += 1
-        
-    logger.info(f"Querying TLEs and Stations")
-    tles = QueryTLEs(cursor)
-    stns = QueryStns(cursor)
+        while not nq.empty():
+            notify = nq.get(block=False, timeout=None)
+            logger.info(f"Dequeued notification: {i}")
+            i += 1
 
-    logger.info(f"Computing Passes")
-    passes = ComputePasses(stns, tles)
-
-    logger.info(f"Inserting Computed Passes Into Database")
-    InsertPasses(conn, cursor, passes)
-    logger.info(f"Pass Database Transaction Completed")
-    pl.release()
+        logger.info("Querying TLEs and Stations")
+        tles = QueryTLEs(cursor)
+        stns = QueryStns(cursor)
+        logger.info(f"Received {len(tles)} TLEs and {len(stns)} Stations")
+        logger.info("Computing Passes")
+        passes = ComputePasses(stns, tles)
+        logger.info("Inserting Computed Passes Into Database")
+        InsertPasses(conn, cursor, passes)
+        logger.info(f"Inserted {len(passes)} Passes into Database")
 
     return
 
@@ -253,24 +247,16 @@ def main() -> None:
     logger.info(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
     gen = listen_conn.notifies()
     nq = Queue(maxsize=qsize)
-    pl = Lock()
+    pt = Thread(target=consumer, args=(dt, nq, qsize, io_conn, cursor))
+    pt.start()
 
     for notify in gen:
         match nq.full():
             case True:
-                logger.warning(f"Notification Queue Full")
-                pl.acquire(blocking=True)
-                nqfull_t = Thread(target=consumer, args=(0, pl, nq, qsize, io_conn, cursor))
-                nqfull_t.start()
                 nq.join()
 
             case False:
-                logger.info(f"Enqueueing Notification {notify}")
                 nq.put(notify, block=False)
-                
-                if pl.acquire(blocking=False):
-                    pt = Thread(target=consumer, args=(dt, pl, nq, qsize, io_conn, cursor))
-                    pt.start()
          
     listen_conn.close()
     io_conn.close()
