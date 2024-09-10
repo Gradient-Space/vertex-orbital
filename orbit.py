@@ -1,8 +1,13 @@
-import psycopg, os, time, random, datetime as dt
+import psycopg, os, time, logging, random, datetime as dt
+from threading import Lock, Thread
 from typing import List
 from collections import namedtuple
 from skyfield.api import EarthSatellite, load
 from skyfield.toposlib import wgs84
+
+
+logger = logging.getLogger(__name__)
+
 
 Station = namedtuple(
     "Station", 
@@ -176,26 +181,72 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
     return
 
 
+def delayed_handler(
+        dt: int, 
+        pl: Lock,
+        conn: psycopg.Connection,
+        cursor: psycopg.Cursor
+) -> None:
+
+    logger.info("Notification Batch Processor Sleeping")
+    time.sleep(dt)
+    logger.info("Notification Batch Processor Waking")
+    logger.info(f"Querying TLEs and Stations")
+    tles = QueryTLEs(cursor)
+    stns = QueryStns(cursor)
+    logger.info(f"Computing Passes")
+    passes = ComputePasses(stns, tles)
+    logger.info(f"Inserting Computed Passes Into Database")
+    InsertPasses(conn, cursor, passes)
+    logger.info(f"Pass Database Transaction Completed")
+    logger.info(f"Notification Batch of {dt} sec. Finished")
+    pl.release()
+    
+    return
+
+
 def main() -> None:
+    logging.basicConfig(
+        filename="orbital_prediction_service.log",
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.DEBUG,
+        filemode='a',
+    )
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    )
+    logger.addHandler(logging.StreamHandler())
+
+    logger.info("Parsing Environment Variables")
+    dt = int(os.getenv("DELAY"))
     channel = os.getenv("DB_CHANNEL")
     db_url = os.getenv("DB_URL")
+
+
+    logger.info("Creating Database Notification Channel Listener")
     listen_conn = psycopg.connect(db_url, autocommit=True)         
+    
+    logger.info("Creating Regular Database Connection")
     io_conn = psycopg.connect(db_url)         
     io_conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
     cursor = io_conn.cursor()
     
-    notifications = f"LISTEN {channel}"
-    listen_conn.execute(notifications)
-    print(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
+    listen_conn.execute(f"LISTEN {channel}")
+    logger.info(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
     gen = listen_conn.notifies()
-    i=0
+    pass_lock = Lock()
 
     for notify in gen:
-        print(f"{i} : {notify}")
-        i+=1
+        logger.info(notify)
+
+        if pass_lock.acquire(blocking=False):
+            thrd = Thread(target=delayed_handler, args=(dt, pass_lock, io_conn, cursor))
+            thrd.start()
     
     listen_conn.close()
     io_conn.close()
+   
     return 
 
 

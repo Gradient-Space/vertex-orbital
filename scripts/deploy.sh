@@ -12,4 +12,5 @@ podman run -dit --rm \
     --name vertex-orbital \
     -e DB_URL=${DB_URL} \
     -e DB_CHANNEL=${DB_CHANNEL} \
+    -e DELAY=${DELAY} \
     localhost/vertex-orbital:v0.1
