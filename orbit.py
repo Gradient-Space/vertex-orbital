@@ -9,6 +9,10 @@ from skyfield.toposlib import wgs84
 
 logger = logging.getLogger(__name__)
 
+Notification = namedtuple(
+    "Notification",
+    ["Service"]
+)
 
 Station = namedtuple(
     "Station", 
@@ -115,6 +119,36 @@ def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
 
     return passes
 
+
+def CountNotifs(cursor: psycopg.Cursor) -> int:
+    count_notifs = """
+        SELECT
+            COUNT(service)
+        FROM Notifications 
+        WHERE service='orbit';
+    """
+
+    cursor.execute(count_notifs)
+    row = cursor.fetchone()
+    num_notifs = int(row[0])
+
+    return num_notifs
+
+
+def DeleteNotifs(conn: psycopg.Connection, cursor: psycopg.Cursor) -> None:
+    delete_notifs = """
+        DELETE 
+        FROM Notifications
+        WHERE service='orbit';
+    """
+    
+    with conn.transaction():
+        cursor.execute(delete_notifs)
+
+    conn.commit()
+
+    return
+
 def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
     bools = [True, False]
     passes = []
@@ -182,39 +216,6 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
     return
 
 
-def consumer(
-        dt: int, 
-        nq: Queue,
-        qsize: int,
-        conn: psycopg.Connection,
-        cursor: psycopg.Cursor
-) -> None:
-
-    while True:
-        nq.get(block=True, timeout=None)
-        logger.info("Notification Consumer Thread Sleeping")
-        time.sleep(dt)
-        logger.info("Notification Consumer Thread Waking")
-        i = 0
-
-        while not nq.empty():
-            notify = nq.get(block=False, timeout=None)
-            logger.info(f"Dequeued notification: {i}")
-            i += 1
-
-        logger.info("Querying TLEs and Stations")
-        tles = QueryTLEs(cursor)
-        stns = QueryStns(cursor)
-        logger.info(f"Received {len(tles)} TLEs and {len(stns)} Stations")
-        logger.info("Computing Passes")
-        passes = ComputePasses(stns, tles)
-        logger.info("Inserting Computed Passes Into Database")
-        InsertPasses(conn, cursor, passes)
-        logger.info(f"Inserted {len(passes)} Passes into Database")
-
-    return
-
-
 def main() -> None:
     logging.basicConfig(
         filename="orbital_prediction_service.log",
@@ -230,36 +231,46 @@ def main() -> None:
 
     logger.addHandler(logging.StreamHandler())
     logger.info("Parsing Environment Variables")
-    dt = int(os.getenv("DELAY"))
-    qsize = int(os.getenv("MAX_QUEUE_SIZE"))
-    channel = os.getenv("DB_CHANNEL")
+    period = int(os.getenv("PERIOD"))
+    service = os.getenv("SERVICE")
     db_url = os.getenv("DB_URL")
 
-    logger.info("Creating Database Notification Channel Listener")
-    listen_conn = psycopg.connect(db_url, autocommit=True)         
-    
-    logger.info("Creating Regular Database Connection")
-    io_conn = psycopg.connect(db_url)         
-    io_conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
-    cursor = io_conn.cursor()
-    
-    listen_conn.execute(f"LISTEN {channel}")
-    logger.info(f"LISTENING FOR NOTIFICATIONS ON CHANNEL: {channel}")
-    gen = listen_conn.notifies()
-    nq = Queue(maxsize=qsize)
-    pt = Thread(target=consumer, args=(dt, nq, qsize, io_conn, cursor))
-    pt.start()
+    logger.info("Connecting to Database")
+    conn = psycopg.connect(db_url)         
+    conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
+    cursor = conn.cursor()
 
-    for notify in gen:
-        match nq.full():
-            case True:
-                nq.join()
+    while True:
+        horizon = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=period)
+        logger.info(f"Next pass computation approximately: {horizon} UTC")
+        logger.info("Querying Notifications")
+        num_notifs = CountNotifs(cursor)
+        logger.info(f"Current Notifications: {num_notifs}")
+        
+        if num_notifs > 0:
+            logger.info("Querying TLEs and Stations")
+            tles = QueryTLEs(cursor)
+            stns = QueryStns(cursor)
+            logger.info(f"Received {len(tles)} TLEs and {len(stns)} Stations")
+            logger.info("Computing Passes")
+            passes = ComputePasses(stns, tles)
+            logger.info("Inserting Computed Passes Into Database")
+            InsertPasses(conn, cursor, passes)
+            logger.info(f"Inserted {len(passes)} Passes into Database")
+        
+        if CountNotifs(cursor) > num_notifs:
+            continue
 
-            case False:
-                nq.put(notify, block=False)
-         
-    listen_conn.close()
-    io_conn.close()
+        logger.info(f"Deleting Notifications")
+        DeleteNotifs(conn, cursor)
+        now = dt.datetime.now(dt.UTC)
+        
+        if now < horizon:
+            diff = horizon - now
+            logger.info(f"Sleeping for {diff.seconds}")
+            time.sleep(diff.seconds)
+
+    conn.close()
    
     return 
 
