@@ -9,6 +9,7 @@ from skyfield.toposlib import wgs84
 
 logger = logging.getLogger(__name__)
 
+
 Notification = namedtuple(
     "Notification",
     ["Service"]
@@ -232,7 +233,6 @@ def main() -> None:
     logger.addHandler(logging.StreamHandler())
     logger.info("Parsing Environment Variables")
     period = int(os.getenv("PERIOD"))
-    service = os.getenv("SERVICE")
     db_url = os.getenv("DB_URL")
 
     logger.info("Connecting to Database")

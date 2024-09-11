@@ -11,6 +11,5 @@ podman run -dit --rm \
     --pod Vertex \
     --name vertex-orbital \
     -e DB_URL=${DB_URL} \
-    -e DB_CHANNEL=${DB_CHANNEL} \
     -e PERIOD=${PERIOD} \
     localhost/vertex-orbital:v0.1
