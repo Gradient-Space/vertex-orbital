@@ -1,4 +1,4 @@
-import psycopg, os, time, copy, logging, random, datetime as dt
+import psycopg, os, time, copy, logging, datetime as dt
 from threading import Thread
 from queue import Queue
 from typing import List
@@ -27,7 +27,7 @@ TLE = namedtuple(
 
 Pass = namedtuple(
     "Pass", 
-    ["StnID", "StnName", "NoradID", "SatName", "Azimuth", "Elevation", "Start", "End", "Scheduled"]
+    ["StnID", "StnName", "NoradID", "SatName", "Azimuth", "Elevation", "Start", "End"]
 )
 
 
@@ -95,8 +95,7 @@ def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
             azimuth,
             elevation, 
             aos, 
-            los,
-            Scheduled
+            los
         FROM Passes;
     """
 
@@ -113,8 +112,7 @@ def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
                 ps[4], 
                 ps[5],
                 ps[6],
-                ps[7],
-                ps[8]
+                ps[7]
             )
         )
 
@@ -189,7 +187,6 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
                     float(ele.degrees), 
                     start.isoformat(), 
                     end.isoformat(),
-                    random.choice(bools)
                 )
                 passes.append(ps)
 
@@ -205,9 +202,8 @@ def InsertPasses(conn: psycopg.Connection, cursor: psycopg.Cursor, passes: List[
             azimuth,
             elevation, 
             aos, 
-            los,
-            scheduled
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+            los
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
     """
     with conn.transaction():
         cursor.executemany(insert_passes, passes)
