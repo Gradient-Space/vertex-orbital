@@ -1,6 +1,4 @@
 import psycopg, os, time, copy, logging, datetime as dt
-from threading import Thread
-from queue import Queue
 from typing import List
 from collections import namedtuple
 from skyfield.api import EarthSatellite, load
@@ -231,12 +229,12 @@ def main() -> None:
     period = int(os.getenv("PERIOD"))
     db_url = os.getenv("DB_URL")
 
-    logger.info("Connecting to Database")
-    conn = psycopg.connect(db_url)         
-    conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
-    cursor = conn.cursor()
-
     while True:
+        logger.info("Opening connection to database")
+        conn = psycopg.connect(db_url)         
+        conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
+        cursor = conn.cursor()
+
         horizon = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=period)
         logger.info(f"Next pass computation approximately: {horizon} UTC")
         logger.info("Querying Notifications")
@@ -255,18 +253,20 @@ def main() -> None:
             logger.info(f"Inserted {len(passes)} Passes into Database")
         
         if CountNotifs(cursor) > num_notifs:
+            logger.info(f"Closing Database connection")
+            conn.close()
             continue
 
         logger.info(f"Deleting Notifications")
         DeleteNotifs(conn, cursor)
+        logger.info(f"Closing Database connection")
+        conn.close()
         now = dt.datetime.now(dt.UTC)
         
         if now < horizon:
             diff = horizon - now
             logger.info(f"Sleeping for {diff.seconds}")
             time.sleep(diff.seconds)
-
-    conn.close()
    
     return 
 
