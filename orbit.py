@@ -25,7 +25,7 @@ TLE = namedtuple(
 
 Pass = namedtuple(
     "Pass", 
-    ["StnID", "StnName", "NoradID", "SatName", "Azimuth", "Elevation", "Start", "End"]
+    ["StnID", "StnName", "NoradID", "SatName", "Azimuth", "Elevation", "AOS", "LOS"]
 )
 
 
@@ -171,9 +171,9 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
                     case 2:
                         ends.append(ti.utc_datetime())
 
-            for start, end in zip(starts, ends):
+            for aos, los in zip(starts, ends):
                 diff = sat - stn_wgs84
-                ts = load.timescale().from_datetime(start)
+                ts = load.timescale().from_datetime(aos)
                 topo_pos = diff.at(ts)
                 ele, azi, _ = topo_pos.altaz()
                 ps = Pass(
@@ -183,8 +183,8 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
                     tle.SatName, 
                     float(azi.degrees), 
                     float(ele.degrees), 
-                    start.isoformat(), 
-                    end.isoformat(),
+                    aos.isoformat(), 
+                    los.isoformat(),
                 )
                 passes.append(ps)
 
