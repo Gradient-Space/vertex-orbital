@@ -156,7 +156,7 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
         for tle in tles:
             sat = EarthSatellite(tle.Line1, tle.Line2, name=tle.SatName, ts=load.timescale())
             start = load.timescale().now()
-            end = start + dt.timedelta(days=1)
+            end = start + dt.timedelta(days=1, hours=12)
             t, events = sat.find_events(stn_wgs84, start, end, altitude_degrees=stn.MinHorizon)
             starts, ends = [], []
 
