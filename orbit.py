@@ -116,15 +116,27 @@ def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
 
     return passes
 
+def SelectMaxHorizon(cursor: psycopg.Cursor) -> int:
+    horizon = """
+        SELECT 
+            MAX(max_horizon)
+        FROM Parameters;
+    """
+    cursor.execute(horizon)
+    row = cursor.fetchone()
+    if row is None:
+        return 24
+    
+    max_horizon = int(row[0])
+    return max_horizon
 
 def CountNotifs(cursor: psycopg.Cursor) -> int:
     count_notifs = """
         SELECT
             COUNT(service)
         FROM Notifications 
-        WHERE service='orbit';
+        WHERE service='orbital';
     """
-
     cursor.execute(count_notifs)
     row = cursor.fetchone()
     num_notifs = int(row[0])
@@ -136,7 +148,7 @@ def DeleteNotifs(conn: psycopg.Connection, cursor: psycopg.Cursor) -> None:
     delete_notifs = """
         DELETE 
         FROM Notifications
-        WHERE service='orbit';
+        WHERE service='orbital';
     """
     
     with conn.transaction():
@@ -146,7 +158,7 @@ def DeleteNotifs(conn: psycopg.Connection, cursor: psycopg.Cursor) -> None:
 
     return
 
-def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
+def ComputePasses(stns: List[Station], tles: List[TLE], max_horizon: int) -> List[Pass]:
     bools = [True, False]
     passes = []
 
@@ -156,7 +168,7 @@ def ComputePasses(stns: List[Station], tles: List[TLE]) -> List[Pass]:
         for tle in tles:
             sat = EarthSatellite(tle.Line1, tle.Line2, name=tle.SatName, ts=load.timescale())
             start = load.timescale().now()
-            end = start + dt.timedelta(days=1, hours=12)
+            end = start + dt.timedelta(hours=max_horizon)
             t, events = sat.find_events(stn_wgs84, start, end, altitude_degrees=stn.MinHorizon)
             starts, ends = [], []
 
@@ -235,8 +247,8 @@ def main() -> None:
         conn.set_isolation_level(psycopg.IsolationLevel.READ_COMMITTED)
         cursor = conn.cursor()
 
-        horizon = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=period)
-        logger.info(f"Next pass computation approximately: {horizon} UTC")
+        calc_period = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=period)
+        logger.info(f"Next pass computation approximately: {calc_period} UTC")
         logger.info("Querying Notifications")
         num_notifs = CountNotifs(cursor)
         logger.info(f"Current Notifications: {num_notifs}")
@@ -246,8 +258,11 @@ def main() -> None:
             tles = QueryTLEs(cursor)
             stns = QueryStns(cursor)
             logger.info(f"Received {len(tles)} TLEs and {len(stns)} Stations")
+            logger.info("Finding max horizon for next prediction")
+            max_horizon = SelectMaxHorizon(cursor)
+            logger.info(f"Max Horizon: {max_horizon} hrs")
             logger.info("Computing Passes")
-            passes = ComputePasses(stns, tles)
+            passes = ComputePasses(stns, tles, max_horizon)
             logger.info("Inserting Computed Passes Into Database")
             InsertPasses(conn, cursor, passes)
             logger.info(f"Inserted {len(passes)} Passes into Database")
@@ -263,8 +278,8 @@ def main() -> None:
         conn.close()
         now = dt.datetime.now(dt.UTC)
         
-        if now < horizon:
-            diff = horizon - now
+        if now < calc_period:
+            diff = calc_period - now
             logger.info(f"Sleeping for {diff.seconds}")
             time.sleep(diff.seconds)
    
