@@ -116,6 +116,18 @@ def QueryPasses(cursor: psycopg.Cursor) -> List[Pass]:
 
     return passes
 
+def DeleteHorizons(conn: psycopg.Connection, cursor: psycopg.Cursor) -> None:
+    delete_horizons = """
+        DELETE 
+        FROM Parameters
+        WHERE max_horizon IS NOT NULL;
+    """
+    with conn.transaction():
+        cursor.execute(delete_horizons)
+
+    conn.commit()
+    return
+
 def SelectMaxHorizon(cursor: psycopg.Cursor) -> int:
     horizon = """
         SELECT 
@@ -275,6 +287,10 @@ def main() -> None:
         logger.info(f"Deleting Notifications")
         DeleteNotifs(conn, cursor)
         logger.info(f"Closing Database connection")
+        logger.info(f"Deleting Notifications")
+        DeleteHorizons(conn, cursor)
+        logger.info(f"Closing Database connection")
+        
         conn.close()
         now = dt.datetime.now(dt.UTC)
         
