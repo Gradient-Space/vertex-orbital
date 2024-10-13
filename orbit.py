@@ -1,7 +1,7 @@
 import psycopg, os, time, copy, logging, datetime as dt
 from typing import List
 from collections import namedtuple
-from skyfield.api import EarthSatellite, load
+from skyfield.api import EarthSatellite, Timescale, load
 from skyfield.toposlib import wgs84
 
 
